@@ -78,122 +78,96 @@ class TNEFMAPIObject(object):
         num_properties = bytes_to_int(data[offset:offset + 4])
         offset += 4
 
-        logger.info("%d MAPI properties", num_properties)
         for i in range(num_properties):
             if offset >= dataLen:
-                logger.warn("Wrong number of properties")
-                break
+                continue
 
             attr_type = bytes_to_int(data[offset:offset + 2])
             offset += 2
 
             # FIXME: unused?
-            # attr_multi_value = bool(attr_type & MULTI_VALUE_FLAG)
+            attr_multi_value = (attr_type & MULTI_VALUE_FLAG) != 0
             attr_type &= ~MULTI_VALUE_FLAG  # TODO
             logger.debug("Attribute type: 0x%04x", attr_type)
+
+            type_size = get_type_size(attr_type)
+            if type_size < 0:
+                attr_multi_value = True
 
             attr_name = bytes_to_int(data[offset:offset + 2])
             offset += 2
 
-            attr_guid_exists = bool(attr_name & GUID_EXISTS_FLAG)
-            attr_name &= ~GUID_EXISTS_FLAG
             logger.debug("Attribute name: 0x%04x", attr_name)
             guid = ''
 
-            if attr_guid_exists:
+            if attr_name >= 0x8000 and attr_name <= 0xFFFE:
                 guid = '%32.32x' % bytes_to_int(data[offset:offset + 16])
                 offset += 16
-
                 kind = bytes_to_int(data[offset:offset + 4])
                 offset += 4
 
-                logger.debug("Kind: %8.8x", kind)
                 if kind == 0:
-                    # Skip the iid
                     attr_name = bytes_to_int(data[offset:offset + 4])
                     offset += 4
-                else:
+                elif kind == 1:
                     iidLen = bytes_to_int(data[offset:offset + 4])
                     offset += 4
-                    q, r = divmod(iidLen, 4)
-                    if r != 0:
-                        iidLen += (4 - r)
-                        offset += iidLen
 
-            attr_data = None
-            if attr_type == SZMAPI_SHORT:
-                attr_data = data[offset:offset + 2]
-                offset += 2
+                    offset += iidLen
 
-            elif attr_type == SZMAPI_BOOLEAN:
-                attr_data = bool(data[offset:offset + 4])
-                offset += 4
+                    offset += (-iidLen & 3)
 
-            elif attr_type in (SZMAPI_INT, SZMAPI_FLOAT,
-                               SZMAPI_ERROR,):  # TODO float is wrong here!
-                attr_data = data[offset:offset + 4]
-                offset += 4
+            num_vals = 1
 
-            elif attr_type in (
-                    SZMAPI_DOUBLE, SZMAPI_APPTIME, SZMAPI_CURRENCY,
-                    SZMAPI_INT8BYTE,
-                    SZMAPI_SYSTIME):  # TODO: double is wrong here
-                attr_data = data[offset:offset + 8]
-                offset += 8
-
-            elif attr_type == SZMAPI_CLSID:
-                attr_data = data[offset:offset + 16]
-                offset += 16
-
-            elif attr_type in (
-                    SZMAPI_STRING, SZMAPI_UNICODE_STRING,
-                    SZMAPI_BINARY, SZMAPI_UNSPECIFIED):
-
+            if attr_multi_value:
                 num_vals = bytes_to_int(data[offset:offset + 4])
                 offset += 4
-                logger.debug("Number of values: %d", num_vals)
-                attr_data = []
 
-                for j in range(num_vals):
-                    if offset + 4 >= dataLen:
-                        break
+            if num_vals > 1024 and num_vals > len(data):
+                print("count is too large: %d", num_vals)
 
+            attr_data = []
+
+            for j in range(num_vals):
+                length = type_size
+
+                if type_size < 0:
                     length = bytes_to_int(data[offset:offset+4])
                     offset += 4
 
-                    logger.debug("Length: %d", length)
-                    q, r = divmod(length, 4)
+                data_bytes = data[offset:offset + length]
+                charset = chardet.detect(data_bytes)
 
-                    if r:
-                        length += 4 - r
+                if charset['confidence'] >= 0.3:
+                    attr_data.append(parse_null_str(
+                        text_type(data[offset:offset + length], charset['encoding'])))
+                else:
+                    attr_data.append((data[offset:offset + length]).decode('utf-8', 'replace'))
 
-                    logger.debug("Length: %d", length)
-
-                    data_bytes = data[offset:offset + length]
-                    charset = chardet.detect(data_bytes)
-
-                    if charset['confidence'] >= 0.3:
-                        attr_data.append(parse_null_str(
-                            text_type(data[offset:offset + length], charset['encoding'])))
-                    else:
-                        attr_data.append((data[offset:offset + length]).decode('utf-8', 'replace'))
-
-                    offset += length
-
-            else:
-                logger.warn("## Unknown MAPI type 0x%04x", attr_type)
-                logger.warn("Attribute name: 0x%04x", attr_name)
-                break
+                offset += length
+                offset += (-length & 3)
 
             attr = TNEFMAPI_Attribute(attr_type, attr_name, attr_data, guid)
 
-            logger.debug("Adding MAPI attribute %d to list as %s", (i + 1),
-                                                                           attr)
+            logger.debug("Adding MAPI attribute %d to list as %s", (i + 1), attr)
             attrs.append(attr)
 
-def text_from_bits(bits, encoding='utf-8', errors='surrogatepass'):
-    n = int(bits, 2)
-    return n.to_bytes((n.bit_length() + 7) // 8, 'big').decode(encoding, errors) or '\0'
+def get_type_size(attr_type):
+    switcher = {
+        SZMAPI_SHORT: 2,
+        SZMAPI_BOOLEAN: 2,
+        SZMAPI_INT: 4,
+        SZMAPI_FLOAT: 4,
+        SZMAPI_ERROR: 4,
+        SZMAPI_DOUBLE: 8,
+        SZMAPI_APPTIME: 8,
+        SZMAPI_CURRENCY: 8,
+        SZMAPI_INT8BYTE: 8,
+        SZMAPI_SYSTIME: 8,
+        SZMAPI_CLSID: 16,
+        SZMAPI_UNSPECIFIED: 0,
+    }
+    return switcher.get(attr_type, -1)
 
 
 class TNEFMAPI_Attribute(object):
