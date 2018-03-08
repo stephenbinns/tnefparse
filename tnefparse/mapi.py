@@ -85,10 +85,8 @@ class TNEFMAPIObject(object):
             attr_type = bytes_to_int(data[offset:offset + 2])
             offset += 2
 
-            # FIXME: unused?
             attr_multi_value = (attr_type & MULTI_VALUE_FLAG) != 0
-            attr_type &= ~MULTI_VALUE_FLAG  # TODO
-            logger.debug("Attribute type: 0x%04x", attr_type)
+            attr_type &= ~MULTI_VALUE_FLAG
 
             type_size = get_type_size(attr_type)
             if type_size < 0:
@@ -97,7 +95,6 @@ class TNEFMAPIObject(object):
             attr_name = bytes_to_int(data[offset:offset + 2])
             offset += 2
 
-            logger.debug("Attribute name: 0x%04x", attr_name)
             guid = ''
 
             if attr_name >= 0x8000 and attr_name <= 0xFFFE:
@@ -136,20 +133,21 @@ class TNEFMAPIObject(object):
                     offset += 4
 
                 data_bytes = data[offset:offset + length]
-                charset = chardet.detect(data_bytes)
 
-                if charset['confidence'] >= 0.3:
-                    attr_data.append(parse_null_str(
-                        text_type(data[offset:offset + length], charset['encoding'])))
+                if attr_type in (SZMAPI_BINARY, SZMAPI_UNICODE_STRING, SZMAPI_STRING,):
+                    charset = chardet.detect(data_bytes)
+
+                    if charset['confidence'] >= 0.3:
+                        attr_data.append(parse_null_str(text_type(data_bytes, charset['encoding'])))
+                    else:
+                        attr_data.append(data_bytes.decode('utf-8', 'replace'))
                 else:
-                    attr_data.append((data[offset:offset + length]).decode('utf-8', 'replace'))
+                    attr_data.append(data_bytes)
 
                 offset += length
                 offset += (-length & 3)
 
             attr = TNEFMAPI_Attribute(attr_type, attr_name, attr_data, guid)
-
-            logger.debug("Adding MAPI attribute %d to list as %s", (i + 1), attr)
             attrs.append(attr)
 
 def get_type_size(attr_type):
@@ -1069,8 +1067,10 @@ class TNEFMAPI_Attribute(object):
             return self.data[0]
         elif self.attr_type in (SZMAPI_BINARY,):
             return self.data[0]
-        elif self.attr_type in (SZMAPI_INT,):
-            return str(self.data)
+        elif self.attr_type in (SZMAPI_INT, SZMAPI_SHORT,):
+            return bytes_to_int(self.data[0])
+        elif self.attr_type in (SZMAPI_BOOLEAN,):
+            return bool(bytes_to_int(self.data[0]))
         else:
             return self.data
 
