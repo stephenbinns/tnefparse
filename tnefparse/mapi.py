@@ -2,7 +2,7 @@
 
 import logging
 import chardet
-import binascii
+import datetime
 logger = logging.getLogger(__name__)
 
 from .util import bytes_to_int, parse_null_str
@@ -1073,6 +1073,9 @@ class TNEFMAPI_Attribute(object):
             return bytes_to_int(self.data[0])
         elif self.attr_type in (SZMAPI_BOOLEAN,):
             return bool(bytes_to_int(self.data[0]))
+        elif self.attr_type in (SZMAPI_APPTIME, SZMAPI_SYSTIME,):
+            ticks =  int((bytes_to_int(self.data[0]) - 0x019db1ded53e8000) / 10000)
+            return datetime.datetime.fromtimestamp(ticks / 1000)
         else:
             return self.data
 
