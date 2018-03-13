@@ -5,7 +5,7 @@ import chardet
 import datetime
 logger = logging.getLogger(__name__)
 
-from .util import bytes_to_int, parse_null_str
+from .util import bytes_to_int
 from six import text_type
 
 
@@ -61,11 +61,8 @@ class TNEFMAPIObject(object):
         """decode MAPI types"""
 
         self.attrs = []
-        try:
-            self._decode(data)
+        self._decode(data)
 
-        except Exception as e:
-            logger.exception(e)
 
     def __str__(self):
         return "<%s: " % (self.__class__.__name__,)
@@ -137,9 +134,12 @@ class TNEFMAPIObject(object):
                 if attr_type in (SZMAPI_BINARY, SZMAPI_UNICODE_STRING, SZMAPI_STRING,):
                     charset = chardet.detect(data_bytes)
 
-                    if charset['confidence'] >= 0.3:
-                        attr_data.append(parse_null_str(text_type(data_bytes, charset['encoding'])))
-                    else:
+                    try:
+                        if charset['confidence'] >= 0.5:
+                            attr_data.append(text_type(data_bytes, charset['encoding']))
+                        else:
+                            attr_data.append(data_bytes.decode('utf-8', 'replace'))
+                    except:
                         attr_data.append(data_bytes.decode('utf-8', 'replace'))
                 else:
                     attr_data.append(data_bytes)
